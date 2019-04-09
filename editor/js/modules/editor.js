@@ -638,7 +638,7 @@ var EditorModule = {
 		dialog.show();
 	},
 
-	showLayersEditor: function( layers, callback )
+	showLayersEditor: function( layers, callback, node )
 	{
 		var scene = LS.GlobalScene;
 
@@ -673,6 +673,13 @@ var EditorModule = {
 
 		widgets.widgets_per_row = 1;
 		widgets.endContainer();
+
+		if(node)
+			widgets.addButton("Apply Layers to children","Apply", { name_width: 200, callback:function(v){
+				var nodes = node.getDescendants();
+				for(var i = 0; i < nodes.length; ++i)
+					nodes[i].layers = layers;
+			}});
 
 		widgets.addButtons(null,["Close"], function(v){
 			if(v == "Close")
@@ -1643,19 +1650,45 @@ var EditorModule = {
 		var list_widget = null;
 
 		var compos = [];
-		for(var i in LS.Components)
-			compos.push( { icon: EditorModule.icons_path + LS.Components[i].icon, ctor: LS.Components[i], name: LS.getClassName( LS.Components[i] ) });
 
 		var filter = "";
 		var widgets = new LiteGUI.Inspector();
 		var filter_widget = widgets.addString("Filter", filter, { focus:true, immediate:true, callback: function(v) {
 			filter = v.toLowerCase();
+			inner_refresh();
+		}});
+
+		list_widget = widgets.addList(null, compos, { height: 364, callback: inner_selected, callback_dblclick: function(v){
+			selected_component = v;
+			inner_add();
+		}});
+
+		inner_refresh();
+
+		widgets.widgets_per_row = 1;
+
+		var icons = list_widget.querySelectorAll(".icon");
+		for(var i = 0; i < icons.length; i++)
+			icons[i].onerror = function() { this.src = "imgs/mini-icon-question.png"; }
+
+		widgets.addButton("Import from repository","Open", { name_width: 200, callback: function(){
+			PluginsModule.showAddonsDialog(function(){
+				inner_refresh();
+			});
+		}});
+		widgets.addButton(null,"Add", { className:"big", callback: inner_add });
+
+		dialog.add( widgets );
+		dialog.center();
+
+		function inner_refresh()
+		{
 			compos = [];
 			for(var i in LS.Components)
 			{
 				var ctor = LS.Components[i];
 				var name = LS.getClassName( ctor );
-				if(name.toLowerCase().indexOf(filter) != -1)
+				if(!filter || name.toLowerCase().indexOf(filter) != -1)
 				{
 					var o = { ctor: ctor, name: name };
 					if( ctor.icon )
@@ -1665,33 +1698,17 @@ var EditorModule = {
 					compos.push(o);
 				}
 			}
+
+			compos.sort(function compare(a,b) {
+			  if (a.name < b.name)
+				return -1;
+			  if (a.name > b.name)
+				return 1;
+			  return 0;
+			});
+
 			list_widget.updateItems(compos);
-		}});
-
-		compos.sort(function compare(a,b) {
-		  if (a.name < b.name)
-			return -1;
-		  if (a.name > b.name)
-			return 1;
-		  return 0;
-		});
-
-		list_widget = widgets.addList(null, compos, { height: 340, callback: inner_selected, callback_dblclick: function(v){
-			selected_component = v;
-			inner_add();
-		}});
-
-		widgets.widgets_per_row = 1;
-
-		var icons = list_widget.querySelectorAll(".icon");
-		for(var i = 0; i < icons.length; i++)
-			icons[i].onerror = function() { this.src = "imgs/mini-icon-question.png"; }
-
-
-		widgets.addButton(null,"Add", { className:"big", callback: inner_add });
-
-		dialog.add( widgets );
-		dialog.center();
+		}
 
 		function inner_selected(value)
 		{

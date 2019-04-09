@@ -13,6 +13,16 @@ LS.Components.GlobalInfo["@inspector"] = function( component, inspector )
 
 	//inspector.addColor("Background", component.background_color, { pretitle: AnimationModule.getKeyframeCode( component, "background_color"), callback: function(color) { vec3.copy(component.background_color,color); } });
 	inspector.addColor("Ambient light", component.ambient_color, { pretitle: AnimationModule.getKeyframeCode( component, "ambient_color"), callback: function(color) { vec3.copy(component.ambient_color,color); } });
+	inspector.addButtons("Compute SH Irradiance",["Update","Clear"],{ callback: function(v){
+		if( v == "Update" )
+		{
+			var camera = LS.Renderer._current_camera;
+			var position = camera.getCenter();
+			component.computeIrradiance( position, camera.near, camera.far, camera.background_color );
+		}
+		else
+			component.clearIrradiance();
+	}});
 	inspector.addSeparator();
 
 	inner_setTexture("environment");
@@ -268,6 +278,7 @@ LS.Components.Light["@inspector"] = function(light, inspector)
 	if(light.cast_shadows)
 	{
 		inspector.widgets_per_row = 2;
+		//inspector.addCheckbox("Reverse faces", light.hard_shadows, { pretitle: AnimationModule.getKeyframeCode( light, "hard_shadows"), callback: function(v) { light.hard_shadows = v; }});
 		inspector.addCheckbox("Hard shadows", light.hard_shadows, { pretitle: AnimationModule.getKeyframeCode( light, "hard_shadows"), callback: function(v) { light.hard_shadows = v; }});
 		inspector.addLayers("Shadows Layers", light.shadows_layers, { pretitle: AnimationModule.getKeyframeCode( light, "shadows_layers"), callback: function (value) { 
 			light.shadows_layers = value;
@@ -277,7 +288,7 @@ LS.Components.Light["@inspector"] = function(light, inspector)
 		inspector.addNumber("Near", light.near, { pretitle: AnimationModule.getKeyframeCode( light, "near"), callback: function (value) { light.near = value;}});
 		inspector.addNumber("Far", light.far, { pretitle: AnimationModule.getKeyframeCode( light, "far"), callback: function (value) { light.far = value; }});
 		inspector.widgets_per_row = 1;
-		inspector.addNumber("Shadow bias", light.shadow_bias, { pretitle: AnimationModule.getKeyframeCode( light, "shadow_bias"), step: 0.001, precision: 3, min:0, callback: function (value) { light.shadow_bias = value; }});
+		inspector.addNumber("Shadow bias", light.shadow_bias, { pretitle: AnimationModule.getKeyframeCode( light, "shadow_bias"), step: 0.001, precision: 3, min:-0.5, callback: function (value) { light.shadow_bias = value; }});
 		inspector.addCombo("Shadowmap size", !light.shadowmap_resolution ? "Default" : light.shadowmap_resolution, { pretitle: AnimationModule.getKeyframeCode( light, "shadowmap_resolution"), values: ["Default",256,512,1024,2048,4096], callback: function(v) { 
 			if(v == "Default")
 				light.shadowmap_resolution = 0; 
@@ -616,9 +627,12 @@ LS.FXStack.prototype.inspect = function( inspector, component )
 
 LS.Components.MorphDeformer["@inspector"] = function(component, inspector)
 {
-	inspector.addCombo("mode",component.mode, { values: LS.Components.MorphDeformer["@mode"].values, callback: function (value) { 
+	inspector.widgets_per_row = 2;
+	inspector.addCombo("mode",component.mode, { name_width: 100, values: LS.Components.MorphDeformer["@mode"].values, width:"60%", callback: function (value) { 
 		component.mode = value; 
 	}});
+	inspector.addCheckbox("delta_meshes", component.delta_meshes, { name_width: 120, width:"40%", callback: function(v){ component.delta_meshes = v; }});
+	inspector.widgets_per_row = 1;
 
 	if( component.morph_targets.length )
 	{
@@ -657,7 +671,8 @@ LS.Components.MorphDeformer["@inspector"] = function(component, inspector)
 	inspector.widgets_per_row = 1;
 }
 
-LS.Components.SkinDeformer.onShowProperties = LS.Components.SkinnedMeshRenderer.onShowProperties = function( component, inspector )
+if(LS.Components.SkinDeformer)
+LS.Components.SkinDeformer.onShowProperties = function( component, inspector )
 {
 	inspector.addButton("","See bones", { callback: function() { 
 		EditorModule.showBonesDialog( component.getMesh() ); //right below this function
@@ -718,6 +733,7 @@ EditorModule.showBonesDialog = function( mesh )
 	return dialog;
 }
 
+if( LS.Components.ParticleEmissor )
 LS.Components.ParticleEmissor["@inspector"] = function(component, inspector)
 {
 	if(!component) return;
@@ -792,14 +808,14 @@ LS.Components.ParticleEmissor["@inspector"] = function(component, inspector)
 
 /** extras ****/
 
-
+if( LS.Components.CameraController )
 LS.Components.CameraController.onShowProperties = function(component, inspector)
 {
 	if(!component._root || !component._root.camera)
 		inspector.addInfo(null,"<span class='alert'>Warning: No camera found in node</span>");
 }
 
-
+if(LS.Components.ThreeJS)
 LS.Components.ThreeJS.onShowProperties = function( component, inspector )
 {
 	//add to inspector the vars
@@ -811,6 +827,7 @@ LS.Components.ThreeJS.onShowProperties = function( component, inspector )
 	}
 }
 
+if(LS.Components.SpriteAtlas)
 LS.Components.SpriteAtlas["@inspector"] = function( component, inspector )
 {
 	inspector.addTexture("texture", component.texture, { callback: function(v){
@@ -822,7 +839,7 @@ LS.Components.SpriteAtlas["@inspector"] = function( component, inspector )
 	});
 }
 
-
+if(LS.Components.SceneInclude)
 LS.Components.SceneInclude["@inspector"] = function( component, inspector )
 {
 	inspector.widgets_per_row = 2;
@@ -862,6 +879,7 @@ LS.Components.SceneInclude["@inspector"] = function( component, inspector )
 	EditorModule.onShowComponentCustomProperties( component._scene.root.custom, inspector, true, component, "custom/" ); 
 }
 
+if(LS.Components.Poser)
 LS.Components.Poser["@inspector"] = function( component, inspector)
 {
 	inspector.widgets_per_row = 2;
@@ -917,6 +935,7 @@ LS.Components.Poser["@inspector"] = function( component, inspector)
 	}});
 }
 
+if(LS.Components.Poser)
 LS.Components.Poser.showPoseNodesDialog = function( component, event )
 {
 	var dialog = new LiteGUI.Dialog({title:"Nodes in Pose", close: true, width: 600, height: 300, resizable: true, scroll: false, draggable: true});
@@ -1014,10 +1033,11 @@ LS.Components.Poser.showPoseNodesDialog = function( component, event )
 	return dialog;
 }
 
+if(LS.Components.ReflectionProbe)
 LS.Components.ReflectionProbe.onShowProperties = function( component, inspector )
 {
 	inspector.widgets_per_row = 2;
-	inspector.addButton( null, "Update", function(){ component.updateTextures(null,true); LS.GlobalScene.requestFrame(); });
+	inspector.addButton( null, "Update", function(){ component.recompute(null,true); LS.GlobalScene.requestFrame(); });
 	inspector.addButton( null, "Update all", function(){ LS.Components.ReflectionProbe.updateAll(); LS.GlobalScene.requestFrame(); });
     inspector.addSeparator();
 
@@ -1028,6 +1048,7 @@ LS.Components.ReflectionProbe.onShowProperties = function( component, inspector 
 	inspector.widgets_per_row = 1;
 }
 
+if(LS.Components.IrradianceCache)
 LS.Components.IrradianceCache.onShowProperties = function( component, inspector )
 {
 	var info = null;
@@ -1057,7 +1078,7 @@ LS.Components.IrradianceCache.onShowProperties = function( component, inspector 
 
 }
 
-
+if(LS.Components.Spline)
 LS.Components.Spline.onShowProperties = function( component, inspector )
 {
 	inspector.addButton( null, "Clear Points", function(){ component.clear(); LS.GlobalScene.requestFrame(); });

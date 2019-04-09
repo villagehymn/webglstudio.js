@@ -15,6 +15,8 @@ global.requestAnimationFrame = global.requestAnimationFrame || global.mozRequest
 
 GL.blockable_keys = {"Up":true,"Down":true,"Left":true,"Right":true};
 
+GL.reverse = null;
+
 //some consts
 GL.LEFT_MOUSE_BUTTON = 1;
 GL.MIDDLE_MOUSE_BUTTON = 2;
@@ -1950,23 +1952,95 @@ quat.fromMat4 = function(out,m)
 	quat.normalize(out,out);
 }
 
-/*
-//http://matthias-mueller-fischer.ch/publications/stablePolarDecomp.pdf
-//reusing the previous quaternion as an indicator
-quat.fromMat3 = function( q, m, max_iter )
+//col according to common matrix notation, here are stored as rows
+vec3.getMat3Column = function(out, m, index )
 {
-	for (var iter = 0; iter < max_iter; ++iter)
-	{
-		Matrix3d R = q.matrix();
-		Vector3d omega = (R.col(0).cross(A.col(0)) + R.col(1).cross(A.col(1)) + R.col(2).cross(A.col(2))) * (1.0 / fabs(R.col(0).dot(A.col(0)) + R.col(1).dot(A.col(1)) + R.col(2).dot(A.col(2))) +	1.0e-9);
-		double w = omega.norm();
-		if (w < 1.0e-9)
-			break;
-		q = Quaterniond(AngleAxisd(w, (1.0 / w) * omega)) * q;
-		q.normalize();
-	}
+	out[0] = m[index*3];
+	out[1] = m[index*3 + 1];
+	out[2] = m[index*3 + 2];
+	return out;
 }
-*/
+
+mat3.setColumn = function(out, v, index )
+{
+	out[index*3] = v[0];
+	out[index*3+1] = v[1];
+	out[index*3+2] = v[2];
+	return out;
+}
+
+
+//http://matthias-mueller-fischer.ch/publications/stablePolarDecomp.pdf
+//reusing the previous quaternion as an indicator to keep perpendicularity
+quat.fromMat3AndQuat = (function(){
+	var temp_mat3 = mat3.create();
+	var temp_quat = quat.create();
+	var Rcol0 = vec3.create();
+	var Rcol1 = vec3.create();
+	var Rcol2 = vec3.create();
+	var Acol0 = vec3.create();
+	var Acol1 = vec3.create();
+	var Acol2 = vec3.create();
+	var RAcross0 = vec3.create();
+	var RAcross1 = vec3.create();
+	var RAcross2 = vec3.create();
+	var omega = vec3.create();
+	var axis = mat3.create();
+
+	return function( q, A, max_iter )
+	{
+		max_iter = max_iter || 25;
+		for (var iter = 0; iter < max_iter; ++iter)
+		{
+			var R = mat3.fromQuat( temp_mat3, q );
+			vec3.getMat3Column(Rcol0,R,0);
+			vec3.getMat3Column(Rcol1,R,1);
+			vec3.getMat3Column(Rcol2,R,2);
+			vec3.getMat3Column(Acol0,A,0);
+			vec3.getMat3Column(Acol1,A,1);
+			vec3.getMat3Column(Acol2,A,2);
+			vec3.cross( RAcross0, Rcol0, Acol0 );
+			vec3.cross( RAcross1, Rcol1, Acol1 );
+			vec3.cross( RAcross2, Rcol2, Acol2 );
+			vec3.add( omega, RAcross0, RAcross1 );
+			vec3.add( omega, omega, RAcross2 );
+			var d = 1.0 / Math.abs( vec3.dot(Rcol0,Acol0) + vec3.dot(Rcol1,Acol1) + vec3.dot(Rcol2,Acol2) ) + 1.0e-9;
+			vec3.scale( omega, omega, d );
+			var w = vec3.length(omega);
+			if (w < 1.0e-9)
+				break;
+			vec3.scale(omega,omega,1/w); //normalize
+			quat.setAxisAngle( temp_quat, omega, w );
+			quat.mul( q, temp_quat, q );
+			quat.normalize(q,q);
+		}
+		return q;
+	};
+})();
+
+//http://number-none.com/product/IK%20with%20Quaternion%20Joint%20Limits/
+quat.rotateToFrom = (function(){ 
+	var tmp = vec3.create();
+	return function(out, v1, v2)
+	{
+		out = out || quat.create();
+		var axis = vec3.cross(tmp, v1, v2);
+		var dot = vec3.dot(v1, v2);
+		if( dot < -1 + 0.01){
+			out[0] = 0;
+			out[1] = 1; 
+			out[2] = 0; 
+			out[3] = 0; 
+			return out;
+		}
+		out[0] = axis[0] * 0.5;
+		out[1] = axis[1] * 0.5; 
+		out[2] = axis[2] * 0.5; 
+		out[3] = (1 + dot) * 0.5; 
+		quat.normalize(out, out); 
+		return out;    
+	}
+})();
 
 quat.lookAt = (function(){ 
 	var axis = vec3.create();
@@ -4937,17 +5011,35 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	if(options.anisotropic && gl.extensions["EXT_texture_filter_anisotropic"])
 		gl.texParameterf( GL.TEXTURE_2D, gl.extensions["EXT_texture_filter_anisotropic"].TEXTURE_MAX_ANISOTROPY_EXT, options.anisotropic);
 
+	var type = this.type;
 	var pixel_data = options.pixel_data;
 	if(pixel_data && !pixel_data.buffer)
 	{
 		if( this.texture_type == GL.TEXTURE_CUBE_MAP )
 		{
-			for(var i = 0; i < pixel_data.length; ++i)
-				pixel_data[i] = new (this.type == gl.FLOAT ? Float32Array : Uint8Array)( pixel_data[i] );
+			if(pixel_data[0].constructor === Number) //special case, specify just one face and copy it
+			{
+				pixel_data = toTypedArray( pixel_data );
+				pixel_data = [pixel_data,pixel_data,pixel_data,pixel_data,pixel_data,pixel_data]; 
+			}
+			else
+				for(var i = 0; i < pixel_data.length; ++i)
+					pixel_data[i] = toTypedArray( pixel_data[i] );
 		}
 		else
-			pixel_data = new (this.type == gl.FLOAT ? Float32Array : Uint8Array)( pixel_data );
+			pixel_data = toTypedArray( pixel_data );
 		this.data = pixel_data;
+	}
+
+	function toTypedArray( data )
+	{
+		if(data.constructor !== Array)
+			return data;
+		if( type == GL.FLOAT)
+			return new Float32Array( data );
+		if( type == GL.HALF_FLOAT_OES)
+			return new Uint16Array( data );
+		return new Uint8Array( data );
 	}
 
 	//gl.TEXTURE_1D is not supported by WebGL...
@@ -4977,7 +5069,7 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	else if(this.texture_type == GL.TEXTURE_3D)
 	{
 		if(this.gl.webgl_version == 1)
-			throw("TEXTURE_3D not supported in WebGL 1. Enable WebGL 2 in the context by pasing webgl2:true");
+			throw("TEXTURE_3D not supported in WebGL 1. Enable WebGL 2 in the context by passing webgl2:true to the context");
 		if(!options.depth)
 			throw("3d texture depth must be set in the options.depth");
 		gl.texImage3D( GL.TEXTURE_3D, 0, this.internalFormat, width, height, options.depth, 0, this.format, this.type, pixel_data || null );
@@ -6191,19 +6283,20 @@ Texture.fromMemory = function( width, height, pixels, options) //format in optio
 	Texture.setUploadOptions(options);
 	texture.bind();
 
-	try {
-		gl.texImage2D( gl.TEXTURE_2D, 0, texture.format, width, height, 0, texture.format, texture.type, pixels );
-		texture.width = width;
-		texture.height = height;
-		texture.data = pixels;
-	} catch (e) {
-		if (location.protocol == 'file:') {
-		  throw 'image not loaded for security reasons (serve this page over "http://" instead)';
-		} else {
-		  throw 'image not loaded for security reasons (image must originate from the same ' +
-			'domain as this page or use Cross-Origin Resource Sharing)';
-		}
+	if(pixels.constructor === Array)
+	{
+		if(options.type == gl.FLOAT)
+			pixels = new Float32Array( pixels );
+		else if(options.type == GL.HALF_FLOAT || options.type == GL.HALF_FLOAT_OES) 
+			pixels = new Uint16Array( pixels ); //gl.UNSIGNED_SHORT_4_4_4_4 is only for texture that are SHORT per pixel, not per channel!
+		else 
+			pixels = new Uint8Array( pixels );
 	}
+
+	gl.texImage2D( gl.TEXTURE_2D, 0, texture.format, width, height, 0, texture.format, texture.type, pixels );
+	texture.width = width;
+	texture.height = height;
+	texture.data = pixels;
 	if (options.minFilter && options.minFilter != gl.NEAREST && options.minFilter != gl.LINEAR) {
 		gl.generateMipmap(gl.TEXTURE_2D);
 		texture.has_mipmaps = true;
@@ -7047,6 +7140,7 @@ FBO.prototype.update = function( skip_disable )
 
 	var target = gl.webgl_version == 1 ? gl.FRAMEBUFFER : gl.DRAW_FRAMEBUFFER;
 
+	//detach anything bindede
 	gl.framebufferRenderbuffer( target, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, null );
 	gl.framebufferRenderbuffer( target, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, null );
 	//detach color too?
@@ -7153,7 +7247,7 @@ FBO.prototype.update = function( skip_disable )
 
 	//check completion
 	var complete = gl.checkFramebufferStatus( target );
-	if(complete !== gl.FRAMEBUFFER_COMPLETE)
+	if(complete !== gl.FRAMEBUFFER_COMPLETE) //36054: GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT
 		throw("FBO not complete: " + complete);
 
 	//restore state
@@ -7236,6 +7330,28 @@ FBO.prototype.delete = function()
 {
 	gl.deleteFramebuffer( this.handler );
 	this.handler = null;
+}
+
+//WebGL 1.0 support for certaing FBOs is not very clear and can crash sometimes
+FBO.supported = {};
+//type: gl.FLOAT, format: gl.RGBA
+FBO.testSupport = function( type, format ) {
+	var name = type +":" + format;
+	if( FBO.supported[ name ] != null );
+		return FBO.supported[ name ];
+
+	var tex = new GL.Texture(1,1,{ format: format, type: type });
+	try
+	{
+		var fbo = new GL.FBO([tex]);
+	}
+	catch (err)
+	{
+		console.warn("This browser WEBGL implementation doesn't support this FBO format: " + GL.reverse[type] + " " + GL.reverse[format] );
+		return FBO.supported[ name ] = false;
+	}
+	FBO.supported[ name ] = true;
+	return true;
 }
 
 
@@ -7845,9 +7961,9 @@ Shader.prototype.drawBuffers = function( vertexBuffers, indexBuffer, mode, range
 
 Shader._instancing_arrays = [];
 
-Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_uniforms, range_start, range_length )
+Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_uniforms, range_start, range_length, num_intances )
 {
-	if(range_length == 0)
+	if(range_length === 0)
 		return;
 
 	//bind buffers
@@ -7890,7 +8006,7 @@ Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_u
 	//range rendering
 	var offset = 0; //in bytes
 	if(range_start > 0) //render a polygon range
-		offset = range_start; //in bytes (Uint16 == 2 bytes)
+		offset = range_start; 
 
 	if (indexBuffer)
 		length = indexBuffer.buffer.length - offset;
@@ -7972,6 +8088,9 @@ Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_u
 		}
 		index+=1;
 	}
+
+	if( num_intances )
+		batch_length = num_intances;
 
 	if( ext ) //webgl 1.0
 	{
@@ -8837,6 +8956,15 @@ GL.create = function(options) {
 	}
 	else
 		console.warn("Creating LiteGL context over the same canvas twice");
+
+	//reverse names helper (assuming no names repeated)
+	if(!GL.reverse)
+	{
+		GL.reverse = {}; 
+		for(var i in gl)
+			if( gl[i] && gl[i].constructor === Number )
+				GL.reverse[ gl[i] ] = i;
+	}
 	
 	//just some checks
 	if(typeof(glMatrix) == "undefined")
